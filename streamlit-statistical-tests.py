@@ -6,44 +6,53 @@ from sklearn.metrics import roc_curve, roc_auc_score
 import matplotlib.pyplot as plt
 from sklearn.utils import resample
 
+# 以下、前回のコードと同じ
+
 def preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col):
     """データの前処理を行う関数"""
-    y_true =     y1_pred = df[y1_pred_col].astype(float)
+    y_true = df[y_true_col].astype(float)
+    y1_pred = df[y1_pred_col].astype(float)
     y2_pred = df[y2_pred_col].astype(float)
     
     # 欠損値や無効な値を除外
     mask = ~(np.isnan(y_true) | np.isnan(y1_pred) | np.isnan(y2_pred))
     y_true = y_true[mask]
-    y1_pred = y1_pred    y2_pred = y2_pred[mask]
+    y1_pred = y1_pred[mask]
+    y2_pred = y2_pred[mask]
     
     # y_trueを0と1のみに制限
     y_true = (y_true > 0.5).astype(int)
     
     return y_true, y1_pred, y2_pred
+
 def delong_roc_variance(ground_truth, predictions_one, predictions_two):
     """
     Computes variance for AUC estimator for paired ROC curves.
     """
     ground_truth, predictions_one, predictions_two = map(lambda x: np.array(x), (ground_truth, predictions_one, predictions_two))
-    assert ground_truth.shape == predictions_one.    
+    assert ground_truth.shape == predictions_one.shape == predictions_two.shape
+    
     # Define helper functions
     def auc(y_true, y_pred):
         return roc_auc_score(y_true, y_pred)
 
     def structural_components(y_true, y_pred):
-        n = len(y        pos = np.array(y_true == 1)
+        n = len(y_true)
+        pos = np.array(y_true == 1)
         neg = np.array(y_true == 0)
 
         m = len(pos[pos])
         n = len(neg[neg])
 
         pos_ranks = np.argsort(y_pred[pos])
-        neg_ranks = np.arg
+        neg_ranks = np.argsort(y_pred[neg])
+
         v_pos = np.zeros(m)
         v_neg = np.zeros(n)
 
         for i in range(m):
-            v_pos[i] = np.sum(neg_ranks < pos_ranks        for i in range(n):
+            v_pos[i] = np.sum(neg_ranks < pos_ranks[i]) / n
+        for i in range(n):
             v_neg[i] = np.sum(pos_ranks > neg_ranks[i]) / m
 
         return v_pos, v_neg
