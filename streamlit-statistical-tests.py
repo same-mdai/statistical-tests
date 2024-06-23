@@ -3,101 +3,89 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from sklearn.metrics import roc_curve, roc_auc_score
-from statsmodels.stats.contingency_tables import mcnemar
 import matplotlib.pyplot as plt
 from sklearn.utils import resample
+from rpy2 import robjects
+from rpy2.robjects import pandas2ri
+from rpy2.robjects.packages import importr
 
-def bootstrap_auc(y_true, y_pred, n_bootstraps=1000, rng_seed=42):
-    n_bootstraps = int(n_bootstraps)
-    rng = np.random.RandomState(rng_seed)
-    bootstrapped_scores = []
+# R のパッケージをインポート
+pROC = importr('pROC')
+base = importr('base')
+stats_r = importr('stats')
+
+# Python と R のデータフレーム変換を自動化
+pandas2ri.activate()
+
+def preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col):
+    """データの前処理を行う関数"""
+    y_true = df[y_true_col].astype(float)
+    y1_pred = df[y1_pred_col].astype(float)
+    y2_pred = df[y2_pred_col].astype(float)
     
-    for i in range(n_bootstraps):
-        # bootstrap by sampling with replacement on the prediction indices
-        indices = rng.randint(0, len(y_pred), len(y_pred))
-        if len(np.unique(y_true[indices])) < 2:
-            # We need at least one positive and one negative sample for ROC AUC
-            # to be defined: reject the sample
-            continue
-        score = roc_auc_score(y_true[indices], y_pred[indices])
-        bootstrapped_scores.append(score)
+    # 欠損値や無効な値を除外
+    mask = ~(np.isnan(y_true) | np.isnan(y1_pred) | np.isnan(y2_pred))
+    y_true = y_true[mask]
+    y1_pred = y1_pred[mask]
+    y2_pred = y2_pred[mask]
     
-    return bootstrapped_scores
-
-def delong_roc_variance(ground_truth, predictions_one, predictions_two):
-    """
-    Computes variance for AUC estimator for paired ROC curves.
+    # y_trueを0と1のみに制限
+    y_true = (y_true > 0.5).astype(int)
     
-    Reference:
-    @article{sun2014fast,
-      title={Fast implementation of DeLong's algorithm for comparing the areas under correlated receiver operating characteristic curves},
-      author={Sun, Xu and Xu, Weichao},
-      journal={IEEE Signal Processing Letters},
-      volume={21},
-      number={11},
-      pages={1389--1393},
-      year={2014},
-      publisher={IEEE}
-    }
-    """
-    ground_truth, predictions_one, predictions_two = map(lambda x: np.array(x), (ground_truth, predictions_one, predictions_two))
-    assert ground_truth.shape == predictions_one.shape == predictions_two.shape
-    
-    # Define helper functions
-    def auc(y_true, y_pred):
-        return roc_auc_score(y_true, y_pred)
+    return y_true, y1_pred, y2_pred
 
-    def structural_components(y_true, y_pred):
-        n = len(y_true)
-        pos = np.array(y_true == 1)
-        neg = np.array(y_true == 0)
+def r_delong_test(y_true, y1_pred, y2_pred):
+    try:
+        # データをRのデータフレームに変換
+        df = pd.DataFrame({
+            'y_true': y_true,
+            'y1_pred': y1_pred,
+            'y2_pred': y2_pred
+        })
+        r_df = pandas2ri.py2rpy(df)
 
-        m = len(pos[pos])
-        n = len(neg[neg])
+        # R の関数を呼び出してROCオブジェクトを作成
+        roc1 = pROC.roc(base.paste('y_true', '~', 'y1_pred'), data=r_df)
+        roc2 = pROC.roc(base.paste('y_true', '~', 'y2_pred'), data=r_df)
 
-        pos_ranks = np.argsort(y_pred[pos])
-        neg_ranks = np.argsort(y_pred[neg])
+        # DeLong検定を実行
+        result = pROC.roc_test(roc1, roc2, method='delong')
 
-        v_pos = np.zeros(m)
-        v_neg = np.zeros(n)
+        # 結果を取得
+        auc1 = pROC.auc(roc1)[0]
+        auc2 = pROC.auc(roc2)[0]
+        z = result.rx2('statistic')[0]
+        p_value = result.rx2('p.value')[0]
 
-        for i in range(m):
-            v_pos[i] = np.sum(neg_ranks < pos_ranks[i]) / n
-        for i in range(n):
-            v_neg[i] = np.sum(pos_ranks > neg_ranks[i]) / m
+        return auc1, auc2, z, p_value
+    except Exception as e:
+        st.error(f"DeLong検定の実行中にエラーが発生しました: {str(e)}")
+        return None, None, None, None
 
-        return v_pos, v_neg
-
-    V_A, V_B = structural_components(ground_truth, predictions_one)
-    V_A1, V_B1 = structural_components(ground_truth, predictions_two)
-
-    # Compute the variance
-    var_A = np.var(V_A) / len(V_A) + np.var(V_B) / len(V_B)
-    var_B = np.var(V_A1) / len(V_A1) + np.var(V_B1) / len(V_B1)
-    cov_AB = (np.cov(V_A, V_A1)[0][1] / len(V_A) + np.cov(V_B, V_B1)[0][1] / len(V_B))
-
-    return var_A, var_B, cov_AB
-
-def delong_test(y_true, y1_pred, y2_pred):
-    auc1 = roc_auc_score(y_true, y1_pred)
-    auc2 = roc_auc_score(y_true, y2_pred)
-    var_auc1, var_auc2, cov_auc = delong_roc_variance(y_true, y1_pred, y2_pred)
-    
-    auc_diff = auc1 - auc2
-    var_auc_diff = var_auc1 + var_auc2 - 2 * cov_auc
-    z = auc_diff / np.sqrt(var_auc_diff)
-    p_value = 2 * (1 - stats.norm.cdf(abs(z)))
-    
-    return auc1, auc2, z, p_value
-
-def mcnemar_test(y_true, y1_pred, y2_pred):
-    # 2x2の分割表を作成
-    table = pd.crosstab(y1_pred == y_true, y2_pred == y_true)
-    
-    # マクネマー検定を実行
-    result = mcnemar(table, exact=False, correction=True)
-    
-    return result.statistic, result.pvalue
+def r_mcnemar_test(y_true, y1_pred, y2_pred):
+    try:
+        # 予測を二値化
+        y1_binary = (y1_pred > 0.5).astype(int)
+        y2_binary = (y2_pred > 0.5).astype(int)
+        
+        # 2x2の分割表を作成
+        table = pd.crosstab(y1_binary == y_true, y2_binary == y_true)
+        
+        # RのデータフレームとSラスノマトリックスに変換
+        r_table = pandas2ri.py2rpy(table)
+        r_matrix = base.as_matrix(r_table)
+        
+        # マクネマー検定を実行
+        result = stats_r.mcnemar_test(r_matrix)
+        
+        # 結果を取得
+        statistic = result.rx2('statistic')[0]
+        p_value = result.rx2('p.value')[0]
+        
+        return statistic, p_value
+    except Exception as e:
+        st.error(f"マクネマー検定の実行中にエラーが発生しました: {str(e)}")
+        return None, None
 
 def plot_roc_curve(y_true, y1_pred, y2_pred):
     fpr1, tpr1, _ = roc_curve(y_true, y1_pred)
@@ -145,63 +133,57 @@ def main():
             
             if st.button('解析を実行', key='run_analysis'):
                 with st.spinner('解析を実行中...'):
-                    y_true = df[y_true_col].astype(float)
-                    y1_pred = df[y1_pred_col].astype(float)
-                    y2_pred = df[y2_pred_col].astype(float)
-
-                    # DeLong検定
-                    auc1, auc2, z_score, delong_p_value = delong_test(y_true, y1_pred, y2_pred)
+                    # データの前処理
+                    y_true, y1_pred, y2_pred = preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col)
                     
-                    # 結果表示
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader('DeLong検定結果')
-                        st.metric(label="AUC (Model 1)", value=f"{auc1:.4f}")
-                        st.metric(label="AUC (Model 2)", value=f"{auc2:.4f}")
-                        st.metric(label="Z-score", value=f"{z_score:.4f}")
-                        st.metric(label="p値", value=f"{delong_p_value:.4f}")
-                    
-                    with col2:
-                        # ROC曲線のプロット
-                        st.subheader('ROC曲線')
-                        fig = plot_roc_curve(y_true, y1_pred, y2_pred)
-                        st.pyplot(fig)
+                    if len(y_true) == 0:
+                        st.error("有効なデータがありません。データを確認してください。")
+                        return
 
-                    # ブートストラップ信頼区間
-                    st.subheader('ブートストラップ信頼区間 (95%)')
-                    n_bootstraps = 1000
-                    with st.spinner('ブートストラップ計算中...'):
-                        bootstrapped_auc1 = bootstrap_auc(y_true, y1_pred, n_bootstraps)
-                        bootstrapped_auc2 = bootstrap_auc(y_true, y2_pred, n_bootstraps)
-                        
-                        ci_lower1, ci_upper1 = np.percentile(bootstrapped_auc1, [2.5, 97.5])
-                        ci_lower2, ci_upper2 = np.percentile(bootstrapped_auc2, [2.5, 97.5])
-                        
+                    # DeLong検定 (R版)
+                    auc1, auc2, z_score, delong_p_value = r_delong_test(y_true, y1_pred, y2_pred)
+                    
+                    if auc1 is not None:
+                        # 結果表示
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric(label="Model 1", value=f"[{ci_lower1:.4f}, {ci_upper1:.4f}]")
+                            st.subheader('DeLong検定結果 (R実装)')
+                            st.metric(label="AUC (Model 1)", value=f"{auc1:.4f}")
+                            st.metric(label="AUC (Model 2)", value=f"{auc2:.4f}")
+                            st.metric(label="Z-score", value=f"{z_score:.4f}")
+                            st.metric(label="p値", value=f"{delong_p_value:.4f}")
+                        
                         with col2:
-                            st.metric(label="Model 2", value=f"[{ci_lower2:.4f}, {ci_upper2:.4f}]")
+                            # ROC曲線のプロット
+                            st.subheader('ROC曲線')
+                            fig = plot_roc_curve(y_true, y1_pred, y2_pred)
+                            st.pyplot(fig)
 
-                    # マクネマー検定
-                    st.subheader('マクネマー検定結果')
-                    mcnemar_statistic, mcnemar_p_value = mcnemar_test(y_true, y1_pred.round(), y2_pred.round())
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric(label="統計量", value=f"{mcnemar_statistic:.4f}")
-                    with col2:
-                        st.metric(label="p値", value=f"{mcnemar_p_value:.4f}")
+                        # マクネマー検定 (R版)
+                        mcnemar_statistic, mcnemar_p_value = r_mcnemar_test(y_true, y1_pred, y2_pred)
+                        
+                        if mcnemar_statistic is not None:
+                            st.subheader('マクネマー検定結果 (R実装)')
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric(label="統計量", value=f"{mcnemar_statistic:.4f}")
+                            with col2:
+                                st.metric(label="p値", value=f"{mcnemar_p_value:.4f}")
+                        else:
+                            st.error("マクネマー検定の実行に失敗しました。データを確認してください。")
 
-                    # 追加の統計情報
-                    st.subheader('追加の統計情報')
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric(label="サンプル数", value=f"{len(y_true)}")
-                    with col2:
-                        st.metric(label="陽性クラスの割合", value=f"{y_true.mean():.2%}")
-                    with col3:
-                        correlation = np.corrcoef(y1_pred, y2_pred)[0, 1]
-                        st.metric(label="モデル間の相関係数", value=f"{correlation:.4f}")
+                        # 追加の統計情報
+                        st.subheader('追加の統計情報')
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric(label="サンプル数", value=f"{len(y_true)}")
+                        with col2:
+                            st.metric(label="陽性クラスの割合", value=f"{y_true.mean():.2%}")
+                        with col3:
+                            correlation = np.corrcoef(y1_pred, y2_pred)[0, 1]
+                            st.metric(label="モデル間の相関係数", value=f"{correlation:.4f}")
+                    else:
+                        st.error("DeLong検定の実行に失敗しました。データを確認してください。")
 
                 st.success('解析が完了しました！')
                 
