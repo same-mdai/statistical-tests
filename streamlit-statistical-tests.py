@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from sklearn.metrics import roc_curve, roc_auc_score
-import matplotfrom sklearn.utils import resample
+import matplotlib.pyplot as plt
+from sklearn.utils import resample
 
 def preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col):
     """データの前処理を行う関数"""
