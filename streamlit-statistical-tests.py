@@ -7,7 +7,6 @@ from statsmodels.stats.contingency_tables import mcnemar
 import matplotlib.pyplot as plt
 from sklearn.utils import resample
 
-# 既存の関数（bootstrap_auc, delong_roc_variance, delong_test, mcnemar_test, plot_roc_curve）はそのまま維持
 def bootstrap_auc(y_true, y_pred, n_bootstraps=1000, rng_seed=42):
     n_bootstraps = int(n_bootstraps)
     rng = np.random.RandomState(rng_seed)
@@ -27,93 +26,66 @@ def bootstrap_auc(y_true, y_pred, n_bootstraps=1000, rng_seed=42):
 
 def delong_roc_variance(ground_truth, predictions_one, predictions_two):
     """
-    Computes ROC AUC variance for two models' predictions.
+    Computes variance for AUC estimator for paired ROC curves.
     
-    Args:
-       ground_truth: np.array of 0 and 1
-       predictions_one: predictions of the first model,
-          np.array of floats of the probability of being class 1
-       predictions_two: predictions of the second model,
-          np.array of floats of the probability of being class 1
+    Reference:
+    @article{sun2014fast,
+      title={Fast implementation of DeLong's algorithm for comparing the areas under correlated receiver operating characteristic curves},
+      author={Sun, Xu and Xu, Weichao},
+      journal={IEEE Signal Processing Letters},
+      volume={21},
+      number={11},
+      pages={1389--1393},
+      year={2014},
+      publisher={IEEE}
+    }
     """
-    ground_truth = np.array(ground_truth)
-    predictions_one = np.array(predictions_one)
-    predictions_two = np.array(predictions_two)
+    ground_truth, predictions_one, predictions_two = map(lambda x: np.array(x), (ground_truth, predictions_one, predictions_two))
+    assert ground_truth.shape == predictions_one.shape == predictions_two.shape
     
-    # AUC is computed using the trapezoidal rule
-    def compute_midrank(x):
-        J = np.argsort(x)
-        Z = x[J]
-        N = len(x)
-        T = np.zeros(N, dtype=float)
-        i = 0
-        while i < N:
-            j = i
-            while j < N and Z[j] == Z[i]:
-                j += 1
-            T[i:j] = 0.5*(i + j - 1)
-            i = j
-        T2 = np.empty(N, dtype=float)
-        # Note(kazeevn) +1 is due to Python using 0-based indexing
-        # instead of 1-based in the AUC formula in the paper
-        T2[J] = T + 1
-        return T2
+    # Define helper functions
+    def auc(y_true, y_pred):
+        return roc_auc_score(y_true, y_pred)
 
-    V_one = compute_midrank(predictions_one)
-    V_two = compute_midrank(predictions_two)
-    pos = np.array(ground_truth == 1)
-    neg = np.array(ground_truth == 0)
-    X_one = np.array(predictions_one[pos])
-    X_two = np.array(predictions_two[pos])
-    Y_one = np.array(predictions_one[neg])
-    Y_two = np.array(predictions_two[neg])
-    n1 = len(X_one)
-    n2 = len(X_two)
-    m1 = len(Y_one)
-    m2 = len(Y_two)
+    def structural_components(y_true, y_pred):
+        n = len(y_true)
+        pos = np.array(y_true == 1)
+        neg = np.array(y_true == 0)
 
-    def compute_auc(X, Y):
-        return (np.sum(np.less.outer(Y, X)) + 0.5 * np.sum(np.equal.outer(Y, X))) / (m1 * n1)
+        m = len(pos[pos])
+        n = len(neg[neg])
 
-    auc_one = compute_auc(X_one, Y_one)
-    auc_two = compute_auc(X_two, Y_two)
+        pos_ranks = np.argsort(y_pred[pos])
+        neg_ranks = np.argsort(y_pred[neg])
 
-    # Compute the components of the covariance matrix
-    theta_one = np.sum(np.less.outer(Y_one, X_one)) / (m1 * n1)
-    theta_two = np.sum(np.less.outer(Y_two, X_two)) / (m2 * n2)
+        v_pos = np.zeros(m)
+        v_neg = np.zeros(n)
 
-    S_one = np.cov(np.array([V_one[pos], V_one[neg]]))
-    S_two = np.cov(np.array([V_two[pos], V_two[neg]]))
+        for i in range(m):
+            v_pos[i] = np.sum(neg_ranks < pos_ranks[i]) / n
+        for i in range(n):
+            v_neg[i] = np.sum(pos_ranks > neg_ranks[i]) / m
 
-    var_auc_one = (
-        S_one[0, 0] / (n1 ** 2)
-        + S_one[1, 1] / (m1 ** 2)
-        - 2 * S_one[0, 1] / (n1 * m1)
-    ) * (n1 + m1) / (4 * (n1 - 1) * (m1 - 1))
-    var_auc_two = (
-        S_two[0, 0] / (n2 ** 2)
-        + S_two[1, 1] / (m2 ** 2)
-        - 2 * S_two[0, 1] / (n2 * m2)
-    ) * (n2 + m2) / (4 * (n2 - 1) * (m2 - 1))
+        return v_pos, v_neg
 
-    # Compute covariance between AUCs
-    S = np.cov(np.array([V_one, V_two]))
-    cov_auc = (
-        S[0, 1] / (n1 * m2)
-        + S[1, 0] / (n2 * m1)
-        - S[0, 0] / (n1 * m1)
-        - S[1, 1] / (n2 * m2)
-    ) * (n1 + n2 + m1 + m2) / (8 * (n1 + n2 - 1) * (m1 + m2 - 1))
+    V_A, V_B = structural_components(ground_truth, predictions_one)
+    V_A1, V_B1 = structural_components(ground_truth, predictions_two)
 
-    var_delta_auc = var_auc_one + var_auc_two - 2 * cov_auc
-    return var_delta_auc
+    # Compute the variance
+    var_A = np.var(V_A) / len(V_A) + np.var(V_B) / len(V_B)
+    var_B = np.var(V_A1) / len(V_A1) + np.var(V_B1) / len(V_B1)
+    cov_AB = (np.cov(V_A, V_A1)[0][1] / len(V_A) + np.cov(V_B, V_B1)[0][1] / len(V_B))
+
+    return var_A, var_B, cov_AB
 
 def delong_test(y_true, y1_pred, y2_pred):
     auc1 = roc_auc_score(y_true, y1_pred)
     auc2 = roc_auc_score(y_true, y2_pred)
-    var = delong_roc_variance(y_true, y1_pred, y2_pred)
+    var_auc1, var_auc2, cov_auc = delong_roc_variance(y_true, y1_pred, y2_pred)
     
-    z = (auc1 - auc2) / np.sqrt(var)
+    auc_diff = auc1 - auc2
+    var_auc_diff = var_auc1 + var_auc2 - 2 * cov_auc
+    z = auc_diff / np.sqrt(var_auc_diff)
     p_value = 2 * (1 - stats.norm.cdf(abs(z)))
     
     return auc1, auc2, z, p_value
@@ -141,23 +113,6 @@ def plot_roc_curve(y_true, y1_pred, y2_pred):
     ax.legend()
     
     return fig
-
-def preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col):
-    """データの前処理を行う関数"""
-    y_true = df[y_true_col].astype(float)
-    y1_pred = df[y1_pred_col].astype(float)
-    y2_pred = df[y2_pred_col].astype(float)
-    
-    # 欠損値や無効な値を除外
-    mask = ~(np.isnan(y_true) | np.isnan(y1_pred) | np.isnan(y2_pred))
-    y_true = y_true[mask]
-    y1_pred = y1_pred[mask]
-    y2_pred = y2_pred[mask]
-    
-    # y_trueを0と1のみに制限
-    y_true = (y_true > 0.5).astype(int)
-    
-    return y_true, y1_pred, y2_pred
 
 def main():
     st.set_page_config(page_title="高度な統計解析アプリ", page_icon="📊", layout="wide")
@@ -190,12 +145,9 @@ def main():
             
             if st.button('解析を実行', key='run_analysis'):
                 with st.spinner('解析を実行中...'):
-                    # データの前処理
-                    y_true, y1_pred, y2_pred = preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col)
-                    
-                    if len(y_true) == 0:
-                        st.error("有効なデータがありません。データを確認してください。")
-                        return
+                    y_true = df[y_true_col].astype(float)
+                    y1_pred = df[y1_pred_col].astype(float)
+                    y2_pred = df[y2_pred_col].astype(float)
 
                     # DeLong検定
                     auc1, auc2, z_score, delong_p_value = delong_test(y_true, y1_pred, y2_pred)
