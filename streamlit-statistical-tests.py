@@ -142,6 +142,23 @@ def plot_roc_curve(y_true, y1_pred, y2_pred):
     
     return fig
 
+def preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col):
+    """データの前処理を行う関数"""
+    y_true = df[y_true_col].astype(float)
+    y1_pred = df[y1_pred_col].astype(float)
+    y2_pred = df[y2_pred_col].astype(float)
+    
+    # 欠損値や無効な値を除外
+    mask = ~(np.isnan(y_true) | np.isnan(y1_pred) | np.isnan(y2_pred))
+    y_true = y_true[mask]
+    y1_pred = y1_pred[mask]
+    y2_pred = y2_pred[mask]
+    
+    # y_trueを0と1のみに制限
+    y_true = (y_true > 0.5).astype(int)
+    
+    return y_true, y1_pred, y2_pred
+
 def main():
     st.set_page_config(page_title="高度な統計解析アプリ", page_icon="📊", layout="wide")
     
@@ -173,9 +190,12 @@ def main():
             
             if st.button('解析を実行', key='run_analysis'):
                 with st.spinner('解析を実行中...'):
-                    y_true = df[y_true_col]
-                    y1_pred = df[y1_pred_col]
-                    y2_pred = df[y2_pred_col]
+                    # データの前処理
+                    y_true, y1_pred, y2_pred = preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col)
+                    
+                    if len(y_true) == 0:
+                        st.error("有効なデータがありません。データを確認してください。")
+                        return
 
                     # DeLong検定
                     auc1, auc2, z_score, delong_p_value = delong_test(y_true, y1_pred, y2_pred)
