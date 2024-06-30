@@ -173,9 +173,9 @@ def perform_statistical_test(data1, data2, paired=False):
     return test_name, statistic, p_value
 
 def main():
-    st.set_page_config(page_title="柔軟な統計分析アプリ", page_icon="📊", layout="wide")
+    st.set_page_config(page_title="統計分析アプリ", page_icon="📊", layout="wide")
     
-    st.title('柔軟な統計分析アプリ 📊')
+    st.title('統計分析アプリ 📊')
     st.sidebar.header('設定')
 
     # 分析タイプの選択
@@ -263,13 +263,13 @@ def main():
                         st.subheader("データ分布の確認")
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.pyplot(plot_distribution(group1, f"{group1_col}の分布"))
-                            st.pyplot(plot_qq(group1, f"{group1_col}のQ-Qプロット"))
+                            st.pyplot(plot_distribution(group1, f"{group1_col} plot"))
+                            st.pyplot(plot_qq(group1, f"{group1_col} Q-Q plot"))
                         with col2:
-                            st.pyplot(plot_distribution(group2, f"{group2_col}の分布"))
-                            st.pyplot(plot_qq(group2, f"{group2_col}のQ-Qプロット"))
+                            st.pyplot(plot_distribution(group2, f"{group2_col} plot"))
+                            st.pyplot(plot_qq(group2, f"{group2_col} Q-Q plot"))
 
-                        st.pyplot(plot_boxplot(group1, group2, [group1_col, group2_col], "グループの箱ひげ図"))
+                        st.pyplot(plot_boxplot(group1, group2, [group1_col, group2_col], "box plot"))
 
                         # 正規性の検定
                         is_normal1 = check_normality(group1)
