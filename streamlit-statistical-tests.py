@@ -92,7 +92,6 @@ def mcnemar_test(y_true, y1_pred, y2_pred):
     return statistic, p_value
 
 
-
 def plot_roc_curve(y_true, y1_pred, y2_pred):
     fpr1, tpr1, _ = roc_curve(y_true, y1_pred)
     fpr2, tpr2, _ = roc_curve(y_true, y2_pred)
@@ -156,155 +155,155 @@ def perform_statistical_test(data1, data2, paired=False):
     if paired:
         if is_normal1 and is_normal2:
             statistic, p_value = stats.ttest_rel(data1, data2)
-            test_name = "Paired t-test"
+            test_name = "対応のあるt検定"
         else:
             statistic, p_value = stats.wilcoxon(data1, data2)
-            test_name = "Wilcoxon signed-rank test"
+            test_name = "ウィルコクソンの符号順位検定"
     else:
         if is_normal1 and is_normal2 and is_homogeneous:
             statistic, p_value = stats.ttest_ind(data1, data2)
-            test_name = "Independent samples t-test"
+            test_name = "独立サンプルのt検定"
         elif is_normal1 and is_normal2 and not is_homogeneous:
             statistic, p_value = stats.ttest_ind(data1, data2, equal_var=False)
-            test_name = "Welch's t-test"
+            test_name = "ウェルチのt検定"
         else:
             statistic, p_value = stats.mannwhitneyu(data1, data2)
-            test_name = "Mann-Whitney U test"
+            test_name = "マンホイットニーのU検定"
     
     return test_name, statistic, p_value
 
 def main():
-    st.set_page_config(page_title="Flexible Statistical Analysis App", page_icon="📊", layout="wide")
+    st.set_page_config(page_title="柔軟な統計分析アプリ", page_icon="📊", layout="wide")
     
-    st.title('Flexible Statistical Analysis App 📊')
-    st.sidebar.header('Settings')
+    st.title('柔軟な統計分析アプリ 📊')
+    st.sidebar.header('設定')
 
-    # Analysis type selection
-    analysis_type = st.sidebar.radio("Select analysis type:", ["ROC Analysis", "Statistical Test"])
+    # 分析タイプの選択
+    analysis_type = st.sidebar.radio("分析タイプを選択:", ["ROC分析", "統計的検定"])
 
-    # File upload
-    uploaded_file = st.sidebar.file_uploader("Upload CSV file", type="csv")
+    # ファイルアップロード
+    uploaded_file = st.sidebar.file_uploader("CSVファイルをアップロード", type="csv")
 
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
-            st.sidebar.success("File successfully uploaded.")
+            st.sidebar.success("ファイルが正常にアップロードされました。")
             
-            # Data preview
-            st.subheader("Data Preview")
+            # データプレビュー
+            st.subheader("データプレビュー")
             st.dataframe(df.head())
             
             columns = df.columns.tolist()
             
-            if analysis_type == "ROC Analysis":
-                # Column selection for ROC analysis
+            if analysis_type == "ROC分析":
+                # ROC分析用の列選択
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    y_true_col = st.selectbox('True value column:', columns)
+                    y_true_col = st.selectbox('真の値の列:', columns)
                 with col2:
-                    y1_pred_col = st.selectbox('Prediction 1 column:', columns)
+                    y1_pred_col = st.selectbox('予測1の列:', columns)
                 with col3:
-                    y2_pred_col = st.selectbox('Prediction 2 column:', columns)
+                    y2_pred_col = st.selectbox('予測2の列:', columns)
                 
-                if st.button('Run ROC Analysis', key='run_roc_analysis'):
-                    with st.spinner('Running analysis...'):
-                        # Data preprocessing
+                if st.button('ROC分析を実行', key='run_roc_analysis'):
+                    with st.spinner('分析を実行中...'):
+                        # データの前処理
                         y_true, y1_pred, y2_pred = preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col)
                         
                         if len(y_true) == 0:
-                            st.error("No valid data. Please check your data.")
+                            st.error("有効なデータがありません。データを確認してください。")
                             return
 
-                        # DeLong test
+                        # DeLong検定
                         auc1, auc2, z_score, delong_p_value = delong_test(y_true, y1_pred, y2_pred)
                         
-                        # Display results
-                        st.subheader('DeLong Test Results')
+                        # 結果表示
+                        st.subheader('DeLong検定結果')
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric(label="AUC (Model 1)", value=f"{auc1:.4f}")
-                            st.metric(label="AUC (Model 2)", value=f"{auc2:.4f}")
+                            st.metric(label="AUC (モデル1)", value=f"{auc1:.4f}")
+                            st.metric(label="AUC (モデル2)", value=f"{auc2:.4f}")
                         with col2:
-                            st.metric(label="Z-score", value=f"{z_score:.4f}")
-                            st.metric(label="p-value", value=f"{delong_p_value:.4f}")
+                            st.metric(label="Z値", value=f"{z_score:.4f}")
+                            st.metric(label="p値", value=f"{delong_p_value:.4f}")
                         
-                        # ROC curve plot
-                        st.subheader('ROC Curve')
+                        # ROC曲線のプロット
+                        st.subheader('ROC曲線')
                         fig = plot_roc_curve(y_true, y1_pred, y2_pred)
                         st.pyplot(fig)
 
-                        # McNemar test
+                        # マクネマー検定
                         mcnemar_statistic, mcnemar_p_value = mcnemar_test(y_true, y1_pred, y2_pred)
                         
-                        st.subheader('McNemar Test Results')
+                        st.subheader('マクネマー検定結果')
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric(label="Statistic", value=f"{mcnemar_statistic:.4f}")
+                            st.metric(label="統計量", value=f"{mcnemar_statistic:.4f}")
                         with col2:
-                            st.metric(label="p-value", value=f"{mcnemar_p_value:.4f}")
+                            st.metric(label="p値", value=f"{mcnemar_p_value:.4f}")
 
-            else:  # Statistical Test
-                # Column selection for statistical test
+            else:  # 統計的検定
+                # 統計的検定用の列選択
                 col1, col2 = st.columns(2)
                 with col1:
-                    group1_col = st.selectbox('Group 1 column:', columns)
+                    group1_col = st.selectbox('グループ1の列:', columns)
                 with col2:
-                    group2_col = st.selectbox('Group 2 column:', columns)
+                    group2_col = st.selectbox('グループ2の列:', columns)
                 
-                # Data relationship
-                is_paired = st.checkbox("Are the data paired? (e.g., repeated measurements on the same subjects)")
+                # データの対応関係
+                is_paired = st.checkbox("データに対応関係がありますか？（例：同じ被験者の繰り返し測定）")
                 
-                if st.button('Run Statistical Test', key='run_stat_test'):
-                    with st.spinner('Running analysis...'):
-                        # Data extraction
+                if st.button('統計的検定を実行', key='run_stat_test'):
+                    with st.spinner('分析を実行中...'):
+                        # データ抽出
                         group1 = df[group1_col].dropna()
                         group2 = df[group2_col].dropna()
 
-                        # Data distribution check
-                        st.subheader("Data Distribution Check")
+                        # データ分布の確認
+                        st.subheader("データ分布の確認")
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.pyplot(plot_distribution(group1, f"Distribution of {group1_col}"))
-                            st.pyplot(plot_qq(group1, f"Q-Q Plot of {group1_col}"))
+                            st.pyplot(plot_distribution(group1, f"{group1_col}の分布"))
+                            st.pyplot(plot_qq(group1, f"{group1_col}のQ-Qプロット"))
                         with col2:
-                            st.pyplot(plot_distribution(group2, f"Distribution of {group2_col}"))
-                            st.pyplot(plot_qq(group2, f"Q-Q Plot of {group2_col}"))
+                            st.pyplot(plot_distribution(group2, f"{group2_col}の分布"))
+                            st.pyplot(plot_qq(group2, f"{group2_col}のQ-Qプロット"))
 
-                        st.pyplot(plot_boxplot(group1, group2, [group1_col, group2_col], "Boxplot of Groups"))
+                        st.pyplot(plot_boxplot(group1, group2, [group1_col, group2_col], "グループの箱ひげ図"))
 
-                        # Normality test
+                        # 正規性の検定
                         is_normal1 = check_normality(group1)
                         is_normal2 = check_normality(group2)
-                        st.write(f"Normality of {group1_col}: {'Normal' if is_normal1 else 'Not normal'}")
-                        st.write(f"Normality of {group2_col}: {'Normal' if is_normal2 else 'Not normal'}")
+                        st.write(f"{group1_col}の正規性: {'正規分布に従う' if is_normal1 else '正規分布に従わない'}")
+                        st.write(f"{group2_col}の正規性: {'正規分布に従う' if is_normal2 else '正規分布に従わない'}")
 
-                        # Homogeneity of variance test
+                        # 等分散性の検定
                         is_homogeneous = check_homogeneity_of_variance(group1, group2)
-                        st.write(f"Homogeneity of variance: {'Homogeneous' if is_homogeneous else 'Not homogeneous'}")
+                        st.write(f"等分散性: {'等分散である' if is_homogeneous else '等分散でない'}")
 
-                        # Outlier detection
+                        # 外れ値の検出
                         outliers1 = detect_outliers(group1)
                         outliers2 = detect_outliers(group2)
-                        st.write(f"Number of outliers in {group1_col}: {outliers1}")
-                        st.write(f"Number of outliers in {group2_col}: {outliers2}")
+                        st.write(f"{group1_col}の外れ値の数: {outliers1}")
+                        st.write(f"{group2_col}の外れ値の数: {outliers2}")
 
-                        # Sample size check
-                        st.write(f"Sample size of {group1_col}: {len(group1)}")
-                        st.write(f"Sample size of {group2_col}: {len(group2)}")
+                        # サンプルサイズの確認
+                        st.write(f"{group1_col}のサンプルサイズ: {len(group1)}")
+                        st.write(f"{group2_col}のサンプルサイズ: {len(group2)}")
 
-                        # Statistical test execution
+                        # 統計的検定の実行
                         test_name, statistic, p_value = perform_statistical_test(group1, group2, paired=is_paired)
-                        st.subheader(f"Statistical Test Results ({test_name})")
-                        st.write(f"Test statistic: {statistic:.4f}")
-                        st.write(f"p-value: {p_value:.4f}")
+                        st.subheader(f"統計的検定結果 ({test_name})")
+                        st.write(f"検定統計量: {statistic:.4f}")
+                        st.write(f"p値: {p_value:.4f}")
 
-                    st.success('Analysis completed!')
+                    st.success('分析が完了しました！')
                 
         except Exception as e:
-            st.error(f'An error occurred: {str(e)}')
-            st.info('Please check your CSV file format and try uploading again.')
+            st.error(f'エラーが発生しました: {str(e)}')
+            st.info('CSVファイルの形式を確認し、再度アップロードしてください。')
 
-    st.sidebar.info('Note: This application is intended for research purposes. Caution should be exercised when interpreting results.')
+    st.sidebar.info('注: このアプリケーションは研究目的で使用されることを想定しています。結果の解釈には注意が必要です。')
 
 if __name__ == '__main__':
     main()
