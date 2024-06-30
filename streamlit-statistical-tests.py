@@ -4,9 +4,9 @@ import numpy as np
 from scipy import stats
 from sklearn.metrics import roc_curve, roc_auc_score
 import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.utils import resample
 
-# 以下、前回のコードと同じ
 
 def preprocess_data(df, y_true_col, y1_pred_col, y2_pred_col):
     """データの前処理を行う関数"""
@@ -106,10 +106,92 @@ def plot_roc_curve(y_true, y1_pred, y2_pred):
     
     return fig
 
-def main():
-    st.set_page_config(page_title="高度な統計解析アプリ", page_icon="📊", layout="wide")
+
+
+def check_normality(data):
+    """正規性の検定を行う関数"""
+    _, p_value = stats.shapiro(data)
+    return p_value > 0.05
+
+def check_homogeneity_of_variance(data1, data2):
+    """等分散性の検定を行う関数"""
+    _, p_value = stats.levene(data1, data2)
+    return p_value > 0.05
+
+def detect_outliers(data):
+    """外れ値を検出する関数 (IQR法を使用)"""
+    Q1 = np.percentile(data, 25)
+    Q3 = np.percentile(data, 75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - (1.5 * IQR)
+    upper_bound = Q3 + (1.5 * IQR)
+    return np.sum((data < lower_bound) | (data > upper_bound))
+
+def check_linearity(x, y):
+    """線形性を確認する関数"""
+    correlation, _ = stats.pearsonr(x, y)
+    return abs(correlation) > 0.7  # 強い相関があれば線形とみなす
+
+def plot_distribution(data, title):
+    """データの分布を可視化する関数"""
+    fig, ax = plt.subplots()
+    sns.histplot(data, kde=True, ax=ax)
+    ax.set_title(title)
+    return fig
+
+def plot_qq(data, title):
+    """Q-Qプロットを描画する関数"""
+    fig, ax = plt.subplots()
+    stats.probplot(data, dist="norm", plot=ax)
+    ax.set_title(title)
+    return fig
+
+def plot_boxplot(data1, data2, labels, title):
+    """箱ひげ図を描画する関数"""
+    fig, ax = plt.subplots()
+    ax.boxplot([data1, data2], labels=labels)
+    ax.set_title(title)
+    return fig
+
+def plot_scatter(x, y, title):
+    """散布図を描画する関数"""
+    fig, ax = plt.subplots()
+    ax.scatter(x, y)
+    ax.set_xlabel("予測1")
+    ax.set_ylabel("予測2")
+    ax.set_title(title)
+    return fig
+
+def perform_statistical_test(data1, data2, paired=False):
+    """適切な統計的検定を実行する関数"""
+    is_normal1 = check_normality(data1)
+    is_normal2 = check_normality(data2)
+    is_homogeneous = check_homogeneity_of_variance(data1, data2)
     
-    st.title('高度な統計解析アプリ 📊')
+    if paired:
+        if is_normal1 and is_normal2:
+            statistic, p_value = stats.ttest_rel(data1, data2)
+            test_name = "対応のあるt検定"
+        else:
+            statistic, p_value = stats.wilcoxon(data1, data2)
+            test_name = "ウィルコクソンの符号順位検定"
+    else:
+        if is_normal1 and is_normal2 and is_homogeneous:
+            statistic, p_value = stats.ttest_ind(data1, data2)
+            test_name = "独立サンプルのt検定"
+        elif is_normal1 and is_normal2 and not is_homogeneous:
+            statistic, p_value = stats.ttest_ind(data1, data2, equal_var=False)
+            test_name = "ウェルチのt検定"
+        else:
+            statistic, p_value = stats.mannwhitneyu(data1, data2)
+            test_name = "マンホイットニーのU検定"
+    
+    return test_name, statistic, p_value
+
+def main():
+    st.set_page_config(page_title="包括的な統計解析アプリ", page_icon="📊", layout="wide")
+    
+    st.title('包括的な統計解析アプリ 📊')
     st.sidebar.header('設定')
 
     # ファイルアップロード
@@ -135,6 +217,9 @@ def main():
             with col3:
                 y2_pred_col = st.selectbox('予測2の列:', columns)
             
+            # データの対応関係
+            is_paired = st.checkbox("データは対応がありますか？（同じ被験者の繰り返し測定など）")
+            
             if st.button('解析を実行', key='run_analysis'):
                 with st.spinner('解析を実行中...'):
                     # データの前処理
@@ -144,23 +229,65 @@ def main():
                         st.error("有効なデータがありません。データを確認してください。")
                         return
 
+                    # データ分布の確認
+                    st.subheader("データ分布の確認")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.pyplot(plot_distribution(y1_pred, "予測1の分布"))
+                        st.pyplot(plot_qq(y1_pred, "予測1のQ-Qプロット"))
+                    with col2:
+                        st.pyplot(plot_distribution(y2_pred, "予測2の分布"))
+                        st.pyplot(plot_qq(y2_pred, "予測2のQ-Qプロット"))
+
+                    st.pyplot(plot_boxplot(y1_pred, y2_pred, ['予測1', '予測2'], "予測値の箱ひげ図"))
+                    st.pyplot(plot_scatter(y1_pred, y2_pred, "予測1 vs 予測2の散布図"))
+
+                    # 正規性の検定
+                    is_normal1 = check_normality(y1_pred)
+                    is_normal2 = check_normality(y2_pred)
+                    st.write(f"予測1の正規性: {'正規分布に従う' if is_normal1 else '正規分布に従わない'}")
+                    st.write(f"予測2の正規性: {'正規分布に従う' if is_normal2 else '正規分布に従わない'}")
+
+                    # 等分散性の検定
+                    is_homogeneous = check_homogeneity_of_variance(y1_pred, y2_pred)
+                    st.write(f"等分散性: {'等分散である' if is_homogeneous else '等分散でない'}")
+
+                    # 外れ値の検出
+                    outliers1 = detect_outliers(y1_pred)
+                    outliers2 = detect_outliers(y2_pred)
+                    st.write(f"予測1の外れ値の数: {outliers1}")
+                    st.write(f"予測2の外れ値の数: {outliers2}")
+
+                    # サンプルサイズの確認
+                    st.write(f"サンプルサイズ: {len(y_true)}")
+
+                    # 線形性の確認
+                    is_linear = check_linearity(y1_pred, y2_pred)
+                    st.write(f"予測1と予測2の関係の線形性: {'線形' if is_linear else '非線形'}")
+
+                    # 適切な統計的検定の実行
+                    test_name, statistic, p_value = perform_statistical_test(y1_pred, y2_pred, paired=is_paired)
+                    st.subheader(f"統計的検定結果 ({test_name})")
+                    st.write(f"検定統計量: {statistic:.4f}")
+                    st.write(f"p値: {p_value:.4f}")
+
                     # DeLong検定
                     auc1, auc2, z_score, delong_p_value = delong_test(y_true, y1_pred, y2_pred)
                     
                     # 結果表示
+                    st.subheader('DeLong検定結果')
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.subheader('DeLong検定結果')
                         st.metric(label="AUC (Model 1)", value=f"{auc1:.4f}")
                         st.metric(label="AUC (Model 2)", value=f"{auc2:.4f}")
+                    with col2:
                         st.metric(label="Z-score", value=f"{z_score:.4f}")
                         st.metric(label="p値", value=f"{delong_p_value:.4f}")
                     
-                    with col2:
-                        # ROC曲線のプロット
-                        st.subheader('ROC曲線')
-                        fig = plot_roc_curve(y_true, y1_pred, y2_pred)
-                        st.pyplot(fig)
+                    # ROC曲線のプロット
+                    st.subheader('ROC曲線')
+                    fig = plot_roc_curve(y_true, y1_pred, y2_pred)
+                    st.pyplot(fig)
 
                     # マクネマー検定
                     mcnemar_statistic, mcnemar_p_value = mcnemar_test(y_true, y1_pred, y2_pred)
